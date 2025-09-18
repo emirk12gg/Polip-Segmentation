@@ -3,8 +3,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 import timm
 
-
-
 class ConvBNReLU(nn.Module):
     def __init__(self, in_ch, out_ch, k=3, s=1, p=1, g=1):
         super().__init__()
@@ -71,21 +69,18 @@ class DecoderBlock(nn.Module):
 class TransFuseL(nn.Module):
     def __init__(self, out_channels=1, pretrained=True):
         super().__init__()
-        # CNN kolu: ResNet-50 (features_only)
         self.cnn = timm.create_model(
             'resnet50', features_only=True, pretrained=pretrained,
             out_indices=(1,2,3,4)
         )
-        # Transformer kolu: Swin-Large 384
         self.tr  = timm.create_model(
             'swin_large_patch4_window12_384', features_only=True, pretrained=pretrained,
             out_indices=(0,1,2,3)
         )
 
-        self.c_ch = self.cnn.feature_info.channels()   # beklenen: [256, 512, 1024, 2048]
-        self.t_ch = self.tr.feature_info.channels()    # beklenen: [192, 384, 768, 1536]
+        self.c_ch = self.cnn.feature_info.channels()  
+        self.t_ch = self.tr.feature_info.channels()   
 
-        # ---- BiFusion/Decoder/Head aynen seninkiler ----
         self.bf4 = BiFusionBlock(self.c_ch[3], self.t_ch[3], 512)
         self.bf3 = BiFusionBlock(self.c_ch[2], self.t_ch[2], 256)
         self.bf2 = BiFusionBlock(self.c_ch[1], self.t_ch[1], 128)
@@ -103,16 +98,13 @@ class TransFuseL(nn.Module):
         c_feats = self.cnn(x)
         t_feats = self.tr(x)
 
-        # --- NHWC → NCHW düzeltmesi (gerekirse) ---
         fixed_t_feats = []
         for i, tf in enumerate(t_feats):
-            exp_c = self.t_ch[i]  # beklenen kanal sayısı (örn. 192/384/768/1536)
-            # Eğer [B,H,W,C] geldiyse ve C == exp_c ise NCHW'ye çevir
+            exp_c = self.t_ch[i] 
             if tf.dim() == 4 and tf.size(1) != exp_c and tf.size(-1) == exp_c:
                 tf = tf.permute(0, 3, 1, 2).contiguous()
             fixed_t_feats.append(tf)
         t_feats = fixed_t_feats
-        # -------------------------------------------
 
         c1, c2, c3, c4 = c_feats
         t1, t2, t3, t4 = t_feats
